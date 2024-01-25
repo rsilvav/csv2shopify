@@ -9,7 +9,10 @@ Just run:
 `pip install -r requirements.txt`
 
 ## Run
-For using it set the dotenv file and run:
+
+### Parsing csv file
+
+For parsing vendor csv run:
 
 `python3 to_shopify.py --vendor <vendor_name>`
 
