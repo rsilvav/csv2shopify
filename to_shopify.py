@@ -2,7 +2,7 @@ import sys
 import csv
 import argparse
 import pandas as pd
-from split_csv import save_chunks
+from utils.save_chunks import save_chunks
 import tkinter as tk
 from tkinter import filedialog
 
@@ -106,7 +106,7 @@ def convert_csv(input_file, output_prefix, vendor,
                 "Handle": handle,
                 "Title": row["titulo"],
                 "Body (HTML)": row["subtitulo"],
-                "Vendor": default_vendor,
+                "Vendor": vendor,
                 "Type": row["familia"],
                 "Tags": f"{row['familia']},{row['subfamilia']}",
                 "Published": "TRUE",  # or "FALSE" if you want to keep it unpublished
