@@ -13,4 +13,4 @@ For using it set the dotenv file and run:
 
 `python3 to_shopify.py --vendor <vendor_name>`
 
-Script will create a csv with all the data in shopify format and also chunks that acomplish the size limit for shopify (15 Mb to date)
+Load the csv vendor file and the script will create a new csv with all the data in shopify format and also chunks that acomplish the size limit for shopify (15 Mb to date)
