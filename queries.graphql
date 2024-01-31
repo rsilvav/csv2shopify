@@ -1,0 +1,15 @@
+query MetafieldDefinitionsQuery {
+    metafieldDefinitions(first: 15, ownerType: PRODUCT) {
+        edges {
+            node {
+                id
+                namespace
+                key
+                type {
+                    name
+                }
+            }
+        }
+    }
+}
+
