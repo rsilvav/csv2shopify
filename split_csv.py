@@ -29,6 +29,7 @@ HEADERS = {"Content-Type": "application/json",
 GRAPHQL_URL = f'{SESSION_URL}/admin/api/2022-04/graphql.json'
 
 document = Path("./queries.graphql").read_text()
+document2 = Path("./queries2.graphql").read_text()
 
 VENDOR_QUERY = '''
     query ($cursor: String) {
@@ -147,7 +148,12 @@ def update_metafields(products, df, session, criteria):
         #meta_vals = [meta['node']["value"] for meta in metafields]
         
         # Criteria can be handler or post_title
-        _match = df[df[criteria] == handle]
+        #import pdb; pdb.set_trace()
+        if criteria == "post_title":
+            _match = df[df[criteria] == title]
+
+        else:
+            _match = df[df[criteria] == handle]
 
         if len(_match) > 0:
             for i in range(20):
@@ -179,7 +185,7 @@ def update_metafields(products, df, session, criteria):
                     # Eliminar unidad del string
                     key = eliminar_unidad(key)
                     
-                    if criteria == "product_title" and type(value) == str:
+                    if criteria == "post_title" and type(value) == str:
                         split = value.split(":")
                         if len(split) <= 2:
                             value = split[0]
@@ -273,7 +279,6 @@ def update_tags(products, df, vendor, criteria="post_title"):
         #    xmatch = df[df[criteria] == handle]
         #print(product["tags"])
         if len(xmatch) > 0 and len(product["tags"]) == 0:
-            #import pdb; pdb.set_trace()
             tags = xmatch["category_tree"].values[0]
             if type(tags) != str:
                 continue
@@ -298,7 +303,7 @@ def retrieve_raw_vendor():
     names = ['post_title', 'sku', 'stock']
     n_attributes = 20
     # Read CSV from URL into DataFrame
-    print(f"retrieving {args.venor} metafields from", VENDOR_RAW_URL)
+    print(f"retrieving {args.vendor} metafields from", VENDOR_RAW_URL)
     df_gt = pd.read_csv(VENDOR_RAW_URL, sep=';', usecols=range(60),
                         index_col=False)
 
@@ -322,7 +327,6 @@ def get_new_products(d_products, df):
 def update_shopify(products, df_shop, location_id, inventory):
     print("\tupdating Shopify stocks...")
     for xproduct in inventory:
-        #print(xproduct)
         prod_id = xproduct["id"].split("/")[-1]
         var_sku = xproduct["sku"]
         var_levels = xproduct["inventoryItem"]["inventoryLevels"]
@@ -385,11 +389,14 @@ def update_shopify(products, df_shop, location_id, inventory):
 def retrieve_products(vendor, limit=250, cursor=None):
     # La consulta GraphQL para obtener productos
     graphql_query = VENDOR_QUERY % (limit, vendor)
-    tiene_siguiente_pagina = True
+    #tiene_siguiente_pagina = True
+    has_next_page = True
     # Ciclo para manejar la paginación
     data = {}
     count = 0
-    while tiene_siguiente_pagina:
+    #while tiene_siguiente_pagina:
+    while has_next_page:
+    #if has_next_page:
         payload = {
             'query': graphql_query,
             'variables': {'cursor': cursor}
@@ -408,13 +415,15 @@ def retrieve_products(vendor, limit=250, cursor=None):
 
         count += len(edges)
         print(count, "products loaded")
-        tiene_siguiente_pagina = products['pageInfo']['hasNextPage']
+        #tiene_siguiente_pagina = products['pageInfo']['hasNextPage']
+        has_next_page = products['pageInfo']['hasNextPage']
         cursor = edges[-1]["cursor"]
         yield [edge['node'] for edge in edges]
         #for edge in edges:
-            #productos.append(edge['node'])
-            #yield edge['node']
-            #cursor = edge['cursor']
+        #    productos.append(edge['node'])
+        #    yield edge['node']
+        #    cursor = edge['cursor']
+    #yield productos
     #return productos
 
 def delete_product(prod_id):
@@ -533,46 +542,32 @@ def check_stock(products, df_shop, location_id):
 
 
 def obtener_stocks(inventory_item_ids, limite=250):
-    query2 = """
-    query($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on ProductVariant {
-          id
-          sku
-          inventoryItem {
-            id
-            inventoryLevels(first: 1) {
-              edges {
-                node {
-                  available  # Stock disponible
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    """
     products = []
     data = {}
     for i_products in range(0, len(inventory_item_ids), limite):
         ids = inventory_item_ids[i_products:i_products + limite]
-        variables = {'ids': ids}
-        payload = {'query': query2, 'variables': variables}
-        response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                 headers=HEADERS, json=payload)
-
-        data = response.json()
+        #variables = {'ids': ids}
+        #payload = {'query': query2, 'variables': variables}
+        #response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
+        #                         headers=HEADERS, json=payload)
+        #data = response.json()
         # Retry until it works
+        response = shopify.GraphQL().execute(query=document2,
+                                             variables={"ids": ids},
+                                             operation_name="IQuery",
+                                             )
+        #import pdb; pdb.set_trace()
+        data = json.loads(response)
         while "errors" in data.keys():
             print("\t throttled")
             response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
                                      headers=HEADERS, json=payload)
             data = response.json()
+        #import pdb; pdb.set_trace()
         products_i = data['data']['nodes']
-        products.extend(products_i)
-        print("\t", len(products))
-    return products
+        yield products_i
+        #products.extend(products_i)
+    #return products
 
 
 def obtener_variantes(product_ids, limite=230):
@@ -765,9 +760,10 @@ if __name__ == "__main__":
                 print(f"\tCHECKING {len(old_shopify)} VARIANTS")
                 variants = check_variants(old_shopify, df_shop)
                 print("\tRETRIEVING INVENTORY LEVELS")
-                inventory = obtener_stocks(variants)
+                #inventory = obtener_stocks(variants)
                 print("\tUPDATE STOCKS")
-                update_shopify(variants, df_shop, location_id, inventory)
+                for inv_chunk in obtener_stocks(variants):
+                    update_shopify(variants, df_shop, location_id, inv_chunk)
         
             
             if args.metafields or args.tags:
