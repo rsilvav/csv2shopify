@@ -31,6 +31,8 @@ GRAPHQL_URL = f'{SESSION_URL}/admin/api/2022-04/graphql.json'
 document = Path("./queries.graphql").read_text()
 document2 = Path("./queries2.graphql").read_text()
 
+meta_bl = ["Medidas", "Color", "Regulable"]
+
 VENDOR_QUERY = '''
     query ($cursor: String) {
       products(first: %s, after: $cursor, query:"vendor:'%s'") {
@@ -61,7 +63,7 @@ META_QUERY = '''
             id
             title
             handle
-            metafields(first: 15) {
+            metafields(first: 50) {
               edges {
                 node {
                   id
@@ -148,7 +150,6 @@ def update_metafields(products, df, session, criteria):
         #meta_vals = [meta['node']["value"] for meta in metafields]
         
         # Criteria can be handler or post_title
-        #import pdb; pdb.set_trace()
         if criteria == "post_title":
             _match = df[df[criteria] == title]
 
@@ -171,9 +172,8 @@ def update_metafields(products, df, session, criteria):
                     #print("skip 4", key)
                     continue
                 
-                #elif eliminar_unidad(key) == "Medidas" or eliminar_unidad(key) == "Luminosidad" or eliminar_unidad(key) == "Casquillo" or eliminar_unidad(key) == "Color":
-                elif eliminar_unidad(key) != "Potencia":
-                    #print("skip 4", key)
+                elif eliminar_unidad(key) in meta_bl:
+                #"Luminosidad" or eliminar_unidad(key) == "Casquillo" or eliminar_unidad(key) == "Color":
                     continue
                  
                 elif not np.all(_match[i_vals] == _match[i_vals].values[0]):
@@ -208,12 +208,16 @@ def update_metafields(products, df, session, criteria):
                         if datatype != "string":
                             value = value.replace(" ", "")
                             value = value.replace(",", ".")
-                            if datatype == "number_integer":
+                            int_cond = datatype == "number_integer"
+                            if int_cond:
                                 value = str(int(float(value)))
                                 if value == "0":
                                     #print('skip 6', key,
                                     #      _match[i_vals].values[0])
                                     continue
+
+                            elif datatype == "number_decimal":
+                                 value = str(float(value))
                             
                             elif datatype == "weight":
                                 aux_dict = {"value": str(value),
@@ -244,10 +248,8 @@ def update_metafields(products, df, session, criteria):
                     code = 429
                     while code == 429:
                         try:
-                            if prod_id == '8656677765446':
-                                print(title, prod_id)
-                                import pdb; pdb.set_trace()
                             product = shopify.Product.find(prod_id)
+                            #import pdb; pdb.set_trace()
                             res = product.add_metafield(shopify.Metafield(meta_dict))
                             print("\tmetafields updated", product.title, key, value, res)
                             code = 200
@@ -685,7 +687,6 @@ def update_meta(df, vendor, criteria, limite=50, cursor=None):
             data = response.json()
 
         # data = response.json()
-        # import pdb; pdb.set_trace()
         products = data['data']['products']
         edges = products['edges']
         #for edge in edges:
@@ -768,7 +769,7 @@ if __name__ == "__main__":
             
             if args.metafields or args.tags:
                 if args.metafields:
-                    print("RETRIEVING METAFIELDS")
+                    print("\tRETRIEVING METAFIELDS")
                     metafields = retrieve_metafields(old_shopify)
                     update_meta(vendor_df, args.vendor, criteria)
                     #update_metafields(old_shopify, vendor_df, session=session,
