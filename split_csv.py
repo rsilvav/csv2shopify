@@ -14,6 +14,7 @@ import string
 import unicodedata
 from dotenv import load_dotenv
 from utils.save_chunks import save_chunks
+from utils.api import update_inventory
 from pathlib import Path
 
 
@@ -342,50 +343,13 @@ def update_shopify(products, df_shop, location_id, inventory):
             prev_stock = var_stock
             sku = var_sku
             
-            if match_stock == 0:
-                if prev_stock == 0:
-                    code = 429
-                    while code == 429:
-                        try:
-                            shopify.InventoryLevel.set(inventory_item_id=inv_id,
-                                                       available=2,
-                                                       location_id=location_id)
-                            print("\t", sku, "actualizado", 2, "unidades")
-                            code = 200
+            if match_stock == prev_stock and prev_stock == 0:
+                update_inventory(inv_id, location_id, sku, 2)
 
-                        except Exception as e:
-                            if e.code == 429:
-                                print("429 error, retrying...") #) #, waiting 5 seconds")
+            elif prev_stock != match_stock:
+                if match_stock > 0:
+                    update_inventory(inv_id, location_id, sku, match_stock)
 
-                            elif e.code == 500 or e.code == 502:
-                                print("500 error")
-                                pass
-                                
-                            else:
-                                print(f"Ocurrió una excepción: {e}")    
-
-            elif prev_stock != match_stock and match_stock != 0:
-                if prev_stock == 0:
-                    code = 429
-                    while code == 429:
-                        try:
-                            shopify.InventoryLevel.set(inventory_item_id=inv_id,
-                                                       available=match_stock,
-                                                       location_id=location_id)
-                            print("\t", sku, "updated", prev_stock, "to",
-                                  match_stock)
-                            code = 200
-
-                        except Exception as e:
-                            if e.code == 429:
-                                print("429 error, retrying...") #) #, waiting 5 seconds")
-
-                            elif e.code == 500 or e.code == 502:
-                                print("500 error")
-                                pass
-                                
-                            else:
-                                print(f"Ocurrió una excepción: {e}")  
 
 
 def retrieve_products(vendor, limit=250, cursor=None):
