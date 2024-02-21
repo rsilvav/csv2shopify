@@ -121,13 +121,14 @@ def make_parser():
 
 
 def update_metafields(products, df, session, criteria):
-    for xproduct in products:
-        product = xproduct['node']
+    for product in products:
+        #print(product["metafields"])
+        #product = xproduct['node']
         prod_id = product["id"].split("/")[-1]
         title = product["title"]
         handle = product["handle"]
         metafields = product['metafields']['edges']
-
+        #print(metafields)
         meta_keys = []
         meta_vals = []
 
@@ -596,6 +597,7 @@ def retrieve_metafields(product_ids, limite=250):
               node {
                 key
                 value
+                namespace
               }
             }
           }
@@ -623,7 +625,7 @@ def retrieve_metafields(product_ids, limite=250):
             data = response.json()
         metafields_i = data['data']['nodes']
         metafields.extend(metafields_i)
-        print("\t", len(metafields))
+        #print("\t", len(metafields))
     return metafields
 
 
@@ -716,7 +718,6 @@ if __name__ == "__main__":
 
         #old_shopify = obtener_productos_vendor(vendor=args.vendor)
         for old_shopify in retrieve_products(limit=250, vendor=args.vendor):
-            # continue 
             if args.update_stock:
                 print("\tCHECKING STOCK")
                 old_shopify = check_stock(old_shopify, df_shop, location_id)
@@ -735,9 +736,9 @@ if __name__ == "__main__":
                 if args.metafields:
                     print("\tRETRIEVING METAFIELDS")
                     metafields = retrieve_metafields(old_shopify)
-                    update_meta(vendor_df, args.vendor, criteria)
-                    #update_metafields(old_shopify, vendor_df, session=session,
-                    #                  vendor=args.vendor)
+                    #update_meta(vendor_df, args.vendor, criteria)
+                    update_metafields(metafields, vendor_df, session=session,
+                                      criteria=criteria)
 
                 if args.tags and not args.csv:
                     print("UPDATE TAGS")
