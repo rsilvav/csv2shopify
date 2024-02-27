@@ -12,7 +12,7 @@ def update_inventory(inv_id, location_id, sku, units):
             shopify.InventoryLevel.set(inventory_item_id=inv_id,
                                        available=units,
                                        location_id=location_id)
-            print("\t", sku, "updated to ", units, " units")
+            print("\t", sku, "updated to", units, "units")
             code = 200
 
         except Exception as e:
