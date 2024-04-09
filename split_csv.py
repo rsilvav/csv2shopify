@@ -16,6 +16,8 @@ from dotenv import load_dotenv
 from utils.save_chunks import save_chunks
 from utils.api import update_inventory
 from pathlib import Path
+from io import StringIO
+from utils.download import download_csv
 
 
 MAX_FILE_SIZE = 15 * 10**6
@@ -281,7 +283,9 @@ def update_tags(products, df, vendor, criteria="post_title"):
         xmatch = df[df[criteria] == title]
         #else:
         #    xmatch = df[df[criteria] == handle]
-        #print(product["tags"])
+        if len(product["tags"]) == 0:
+            import pdb; pdb.set_trace()
+        
         if len(xmatch) > 0 and len(product["tags"]) == 0:
             tags = xmatch["category_tree"].values[0]
             if type(tags) != str:
@@ -305,11 +309,9 @@ def retrieve_shopify(vendor):
 
 def retrieve_raw_vendor():
     names = ['post_title', 'sku', 'stock']
-    n_attributes = 20
-    # Read CSV from URL into DataFrame
     print(f"retrieving {args.vendor} metafields from", VENDOR_RAW_URL)
-    df_gt = pd.read_csv(VENDOR_RAW_URL, sep=';', usecols=range(60),
-                        index_col=False)
+    io = download_csv(VENDOR_RAW_URL)
+    df_gt = pd.read_csv(io, sep=';', usecols=range(60), index_col=False)
 
     return df_gt
 
@@ -465,6 +467,7 @@ def check_stock(products, df_shop, location_id):
     # print("Checking Shopify products...")
     product_ids = []
     norm_handles = df_shop['Handle'].apply(normalizar_cadena)
+    # print(len(products))
     for xproduct in products:
         prod_id = xproduct["id"].split("/")[-1]
         product_title = xproduct["title"]
@@ -513,24 +516,16 @@ def obtener_stocks(inventory_item_ids, limite=250):
     data = {}
     for i_products in range(0, len(inventory_item_ids), limite):
         ids = inventory_item_ids[i_products:i_products + limite]
-        #variables = {'ids': ids}
-        #payload = {'query': query2, 'variables': variables}
-        #response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-        #                         headers=HEADERS, json=payload)
-        #data = response.json()
-        # Retry until it works
         response = shopify.GraphQL().execute(query=document2,
                                              variables={"ids": ids},
                                              operation_name="IQuery",
                                              )
-        #import pdb; pdb.set_trace()
         data = json.loads(response)
         while "errors" in data.keys():
             print("\t throttled")
             response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
                                      headers=HEADERS, json=payload)
             data = response.json()
-        #import pdb; pdb.set_trace()
         products_i = data['data']['nodes']
         yield products_i
         #products.extend(products_i)
@@ -564,6 +559,7 @@ def obtener_variantes(product_ids, limite=230):
     products = []
     cursor = None
     data = {}
+    #print(len(product_ids))
     for i_products in range(0, len(product_ids), limite):
         ids = product_ids[i_products:i_products + limite]
         variables = {'ids': ids}
@@ -683,7 +679,10 @@ if __name__ == "__main__":
         print_str = "Retrieving products from"
         print(print_str, VENDOR_URL)
         # Read CSV from URL into DataFrame
-        df_shop = pd.read_csv(VENDOR_URL, on_bad_lines='skip')
+        #csv_data = requests.get(VENDOR_URL)
+        #io = StringIO(csv_data.text)
+        io = download_csv(VENDOR_URL)
+        df_shop = pd.read_csv(io, on_bad_lines='skip')
         if args.metafields or args.tags:
             print("RETRIEVING METAFIELDS AND TAGS")
             vendor_df = retrieve_raw_vendor()
