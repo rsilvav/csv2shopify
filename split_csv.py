@@ -333,6 +333,8 @@ def get_new_products(d_products, df):
 def update_shopify(products, df_shop, location_id, inventory):
     print("\tupdating Shopify stocks...")
     for xproduct in inventory:
+        if xproduct is None:
+            continue
         prod_id = xproduct["id"].split("/")[-1]
         var_sku = xproduct["sku"]
         var_levels = xproduct["inventoryItem"]["inventoryLevels"]
