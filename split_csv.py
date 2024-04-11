@@ -275,26 +275,44 @@ def update_metafields(products, df, session, criteria):
         
 
 def update_tags(products, df, vendor, criteria="post_title"):
+    """
+    Matches online products with online products and fill tags field if
+    it's empty
+
+    Parameters
+    ----------
+    products: list
+        List of dicts
+
+    df: object
+        Pandas dataframe of offline products
+
+    vendor: string
+        Vendor name
+
+    criteria: str
+        Criteria for matching online dict and offline dataframe
+
+    """
+
     for product in products:
         title = product["title"]
         handle = product["handle"]
         prod_id = product["id"].split("/")[-1]
-        #if criteria == "post_title":
         xmatch = df[df[criteria] == title]
-        #else:
-        #    xmatch = df[df[criteria] == handle]
         if len(product["tags"]) == 0:
-            import pdb; pdb.set_trace()
-        
-        if len(xmatch) > 0 and len(product["tags"]) == 0:
-            tags = xmatch["category_tree"].values[0]
-            if type(tags) != str:
-                continue
-            tags = tags.replace(' -', ',')
-            product = shopify.Product.find(str(prod_id))
-            product.tags = tags
-            product.save()
-            print("tags updated", title, tags)
+            if len(xmatch) > 0:
+                tags = xmatch["category_tree"].values[0]
+                if type(tags) != str:
+                    continue
+                tags = tags.replace(' -', ',')
+                product = shopify.Product.find(str(prod_id))
+                product.tags = tags
+                product.save()
+                print("tags updated", title, tags)
+
+            else:
+                pdb.set_trace()
             
 
 def retrieve_shopify(vendor): 
@@ -360,7 +378,6 @@ def update_shopify(products, df_shop, location_id, inventory):
 def retrieve_products(vendor, limit=250, cursor=None):
     # La consulta GraphQL para obtener productos
     graphql_query = VENDOR_QUERY % (limit, vendor)
-    #tiene_siguiente_pagina = True
     has_next_page = True
     # Ciclo para manejar la paginación
     data = {}
@@ -386,7 +403,6 @@ def retrieve_products(vendor, limit=250, cursor=None):
 
         count += len(edges)
         print(count, "products loaded")
-        #tiene_siguiente_pagina = products['pageInfo']['hasNextPage']
         has_next_page = products['pageInfo']['hasNextPage']
         cursor = edges[-1]["cursor"]
         yield [edge['node'] for edge in edges]
@@ -466,10 +482,27 @@ def check_variants(products, df_shop):
 
 
 def check_stock(products, df_shop, location_id):
-    # print("Checking Shopify products...")
+    """
+    Compares the current (old/online) products list with the new/offline one,
+    deleting online products that are not matched
+    
+    Parameters
+    ----------
+    products: list
+        List of products' dicts
+
+    df_shop: Object
+        Pandas dataframe of offline products
+
+    location_id:
+
+    Returns
+    -------
+    list:
+        IDs list of matched products
+    """
     product_ids = []
     norm_handles = df_shop['Handle'].apply(normalizar_cadena)
-    # print(len(products))
     for xproduct in products:
         prod_id = xproduct["id"].split("/")[-1]
         product_title = xproduct["title"]
@@ -716,8 +749,6 @@ if __name__ == "__main__":
         DEF_KEYS = [x["node"]["key"] for x in definitions]
         DEF_TYPES = [x["node"]["type"]["name"] for x in definitions]
 
-
-        #old_shopify = obtener_productos_vendor(vendor=args.vendor)
         for old_shopify in retrieve_products(limit=250, vendor=args.vendor):
             if args.update_stock:
                 print("\tCHECKING STOCK")
