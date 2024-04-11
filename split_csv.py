@@ -123,31 +123,49 @@ def make_parser():
 
 
 def update_metafields(products, df, session, criteria):
+    """
+    Matches online products with online products and update metafields
+    if they are different
+
+    Parameters
+    ----------
+    products: list
+        List of dicts
+
+    df: object
+        Pandas dataframe of offline product metafields
+
+    session: 
+        
+
+    criteria: str
+        Criteria for matching online dict and offline dataframe
+
+    """
+
     for product in products:
-        #print(product["metafields"])
-        #product = xproduct['node']
         prod_id = product["id"].split("/")[-1]
         title = product["title"]
         handle = product["handle"]
         metafields = product['metafields']['edges']
-        #print(metafields)
         meta_keys = []
         meta_vals = []
 
         for metafield in metafields:
-            #meta_namespace = metafield.attributes["namespace"]
             meta_namespace = metafield['node']['namespace']
             
             if meta_namespace == "custom":
+                #for simplicity, only namespace allowed is "custom"
                 meta_keys.append(metafield['node']["key"])
                 meta_vals.append(metafield['node']["value"])
             
-            else:
-                xid = metafield['node']["id"].split("/")[-1]
-                xmeta = shopify.Metafield.find(xid)
-                xmeta.destroy()
-                print(xmeta.attributes["key"], "metafield deleted",
-                      title, meta_namespace)
+            #else:
+            #    pass
+            #    xid = metafield['node']["id"].split("/")[-1]
+            #    xmeta = shopify.Metafield.find(xid)
+            #    xmeta.destroy()
+            #    print(xmeta.attributes["key"], "metafield deleted",
+            #          title, meta_namespace)
 
 
         #meta_keys = [meta['node']["key"] for meta in metafields]
@@ -169,19 +187,15 @@ def update_metafields(products, df, session, criteria):
                 
                 # Keys must not be nan
                 if type(key) == float and np.isnan(key):
-                    #print("skip 2")
                     continue
 
                 elif eliminar_unidad(key) not in DEF_KEYS:
-                    #print("skip 4", key)
                     continue
                 
                 elif eliminar_unidad(key) in meta_bl:
-                #"Luminosidad" or eliminar_unidad(key) == "Casquillo" or eliminar_unidad(key) == "Color":
                     continue
                  
                 elif not np.all(_match[i_vals] == _match[i_vals].values[0]):
-                    #print("skip 3")
                     continue
 
 
@@ -208,8 +222,9 @@ def update_metafields(products, df, session, criteria):
                         i_def_type = DEF_KEYS.index(key)
                         datatype = DEF_TYPES[i_def_type]
                         meta_dict["type"] = datatype
-                        #print(key)
                         if datatype != "string":
+                            if type(value) == float:
+                                value = str(value)
                             value = value.replace(" ", "")
                             value = value.replace(",", ".")
                             int_cond = datatype == "number_integer"
@@ -253,7 +268,6 @@ def update_metafields(products, df, session, criteria):
                     while code == 429:
                         try:
                             product = shopify.Product.find(prod_id)
-                            #import pdb; pdb.set_trace()
                             res = product.add_metafield(shopify.Metafield(meta_dict))
                             print("\tmetafields updated", product.title, key, value, res)
                             code = 200
