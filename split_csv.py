@@ -18,6 +18,8 @@ from utils.api import update_inventory
 from pathlib import Path
 from io import StringIO
 from utils.download import download_csv
+from src.metafields import retrieve_metafields, update_metafields
+from src.stocks import retrieve_stocks
 
 
 MAX_FILE_SIZE = 15 * 10**6
@@ -34,7 +36,7 @@ GRAPHQL_URL = f'{SESSION_URL}/admin/api/2022-04/graphql.json'
 document = Path("./queries.graphql").read_text()
 document2 = Path("./queries2.graphql").read_text()
 
-meta_bl = ["Medidas", "Color", "Regulable"]
+#meta_bl = ["Medidas", "Color", "Regulable"]
 
 VENDOR_QUERY = '''
     query ($cursor: String) {
@@ -121,172 +123,6 @@ def make_parser():
     parser.add_argument("--csv", type=str)
     return parser
 
-
-def update_metafields(products, df, session, criteria):
-    """
-    Matches online products with online products and update metafields
-    if they are different
-
-    Parameters
-    ----------
-    products: list
-        List of dicts
-
-    df: object
-        Pandas dataframe of offline product metafields
-
-    session: 
-        
-
-    criteria: str
-        Criteria for matching online dict and offline dataframe
-
-    """
-
-    for product in products:
-        prod_id = product["id"].split("/")[-1]
-        title = product["title"]
-        handle = product["handle"]
-        metafields = product['metafields']['edges']
-        meta_keys = []
-        meta_vals = []
-
-        for metafield in metafields:
-            meta_namespace = metafield['node']['namespace']
-            
-            if meta_namespace == "custom":
-                #for simplicity, only namespace allowed is "custom"
-                meta_keys.append(metafield['node']["key"])
-                meta_vals.append(metafield['node']["value"])
-            
-            #else:
-            #    pass
-            #    xid = metafield['node']["id"].split("/")[-1]
-            #    xmeta = shopify.Metafield.find(xid)
-            #    xmeta.destroy()
-            #    print(xmeta.attributes["key"], "metafield deleted",
-            #          title, meta_namespace)
-
-
-        #meta_keys = [meta['node']["key"] for meta in metafields]
-        #meta_vals = [meta['node']["value"] for meta in metafields]
-        
-        # Criteria can be handler or post_title
-        if criteria == "post_title":
-            _match = df[df[criteria] == title]
-
-        else:
-            _match = df[df[criteria] == handle]
-
-        if len(_match) > 0:
-            for i in range(20):
-                i_names = "Attribute "+str(i + 1) + " name"
-                i_vals = "Attribute "+str(i + 1) + " value(s)"
-                key = _match[i_names].values[0]
-                value = _match[i_vals].values[0]
-                
-                # Keys must not be nan
-                if type(key) == float and np.isnan(key):
-                    continue
-
-                elif eliminar_unidad(key) not in DEF_KEYS:
-                    continue
-                
-                elif eliminar_unidad(key) in meta_bl:
-                    continue
-                 
-                elif not np.all(_match[i_vals] == _match[i_vals].values[0]):
-                    continue
-
-
-                else:
-                    # Eliminar unidad del string
-                    key = eliminar_unidad(key)
-                    
-                    if criteria == "post_title" and type(value) == str:
-                        split = value.split(":")
-                        if len(split) <= 2:
-                            value = split[0]
-                            if value == "":
-                                continue
-
-
-                    meta_dict = {"value":value,
-                                 "key": key,
-                                 "namespace": "custom",
-                                 "type": "string",}
-
-
-                    # Load only defined metafields
-                    if key in DEF_KEYS:
-                        i_def_type = DEF_KEYS.index(key)
-                        datatype = DEF_TYPES[i_def_type]
-                        meta_dict["type"] = datatype
-                        if datatype != "string":
-                            if type(value) == float:
-                                value = str(value)
-                            value = value.replace(" ", "")
-                            value = value.replace(",", ".")
-                            int_cond = datatype == "number_integer"
-                            if int_cond:
-                                value = str(int(float(value)))
-                                if value == "0":
-                                    #print('skip 6', key,
-                                    #      _match[i_vals].values[0])
-                                    continue
-
-                            elif datatype == "number_decimal":
-                                 value = str(float(value))
-                            
-                            elif datatype == "weight":
-                                aux_dict = {"value": str(value),
-                                            "unit": "g"}
-                                value = json.dumps(aux_dict)
-
-                            meta_dict["value"] = value
-
-
-                    # If there is a previous value for the metafield
-                    if key in meta_keys:
-                        i_meta = meta_keys.index(key)
-                        prev_val = meta_vals[i_meta]
-                        if prev_val == value:
-                            continue
-                        elif key in DEF_KEYS and datatype == "weight":
-                            prev_val = json.loads(prev_val)["value"]
-                            prev_val = float(prev_val)
-                            str_weight = json.loads(value)["value"]
-                            if prev_val == float(str_weight):
-                                continue
-
-                    elif type(value) == float:
-                        if np.isnan(value):
-                            #print("skip 5")
-                            continue
-                    
-                    code = 429
-                    while code == 429:
-                        try:
-                            product = shopify.Product.find(prod_id)
-                            res = product.add_metafield(shopify.Metafield(meta_dict))
-                            print("\tmetafields updated", product.title, key, value, res)
-                            code = 200
-
-                        except Exception as e:
-                            if e.code == 429:
-                                print("429 error, retrying...") #) #, waiting 5 seconds")
-
-                            elif e.code == 500 or e.code == 502:
-                                print("500 error")
-                                pass
-                        
-                            else:
-                                print(f"Ocurrió una excepción: {e}")
-
-        else:
-            print("no match", title, handle)
-            #continue
-        
 
 def update_tags(products, df, vendor, criteria="post_title"):
     """
@@ -560,27 +396,6 @@ def check_stock(products, df_shop, location_id):
     return product_ids
 
 
-def obtener_stocks(inventory_item_ids, limite=250):
-    products = []
-    data = {}
-    for i_products in range(0, len(inventory_item_ids), limite):
-        ids = inventory_item_ids[i_products:i_products + limite]
-        response = shopify.GraphQL().execute(query=document2,
-                                             variables={"ids": ids},
-                                             operation_name="IQuery",
-                                             )
-        data = json.loads(response)
-        while "errors" in data.keys():
-            print("\t throttled")
-            response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                     headers=HEADERS, json=payload)
-            data = response.json()
-        products_i = data['data']['nodes']
-        yield products_i
-        #products.extend(products_i)
-    #return products
-
-
 def obtener_variantes(product_ids, limite=230):
     query = """
     query($ids: [ID!]!) {
@@ -627,51 +442,6 @@ def obtener_variantes(product_ids, limite=230):
         products.extend(products_i)
         # print("\t", len(products))
     return products
-
-
-def retrieve_metafields(product_ids, limite=250):
-    query = """
-    query($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on Product {
-          title
-          handle
-          id
-          metafields(first: 250) {
-            edges {
-              node {
-                key
-                value
-                namespace
-              }
-            }
-          }
-        }
-      }
-    }
-    """
-    metafields = []
-    data = {}
-    for i_products in range(0, len(product_ids), limite):
-        ids = product_ids[i_products:i_products + limite]
-        ids = [id["id"] for id in ids]
-        variables = {'ids': ids}
-        payload = {'query': query, 'variables': variables}
-        response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                 headers=HEADERS, json=payload)
-
-        data = response.json()
-        # Retry until it works
-        while "errors" in data.keys():
-            import pdb; pdb.set_trace()
-            print("\t throttled")
-            response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                     headers=HEADERS, json=payload)
-            data = response.json()
-        metafields_i = data['data']['nodes']
-        metafields.extend(metafields_i)
-        #print("\t", len(metafields))
-    return metafields
 
 
 def update_meta(df, vendor, criteria, limite=50, cursor=None):
@@ -772,9 +542,8 @@ if __name__ == "__main__":
                 print(f"\tCHECKING {len(old_shopify)} VARIANTS")
                 variants = check_variants(old_shopify, df_shop)
                 print("\tRETRIEVING INVENTORY LEVELS")
-                #inventory = obtener_stocks(variants)
                 print("\tUPDATE STOCKS")
-                for inv_chunk in obtener_stocks(variants):
+                for inv_chunk in retrieve_stocks(variants):
                     update_shopify(variants, df_shop, location_id, inv_chunk)
         
             
@@ -783,8 +552,8 @@ if __name__ == "__main__":
                     print("\tRETRIEVING METAFIELDS")
                     metafields = retrieve_metafields(old_shopify)
                     #update_meta(vendor_df, args.vendor, criteria)
-                    update_metafields(metafields, vendor_df, session=session,
-                                      criteria=criteria)
+                    update_metafields(metafields, vendor_df, session,
+                                      DEF_KEYS, DEF_TYPES, criteria)
 
                 if args.tags and not args.csv:
                     print("UPDATE TAGS")
