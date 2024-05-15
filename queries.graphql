@@ -1,4 +1,4 @@
-query MetafieldDefinitionsQuery {
+    query MetafieldDefinitionsQuery {
     metafieldDefinitions(first: 15, ownerType: PRODUCT) {
         edges {
             node {
@@ -11,5 +11,24 @@ query MetafieldDefinitionsQuery {
             }
         }
     }
+}
+
+    query InventoryQuery($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          sku
+          inventoryItem {
+            id
+            inventoryLevels(first: 1) {
+              edges {
+                node {
+                  available  # Stock disponible
+                }
+              }
+            }
+          }
+        }
+      }
 }
 

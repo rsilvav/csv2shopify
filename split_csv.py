@@ -14,7 +14,12 @@ import string
 import unicodedata
 from dotenv import load_dotenv
 from utils.save_chunks import save_chunks
+from utils.api import update_inventory
 from pathlib import Path
+from io import StringIO
+from utils.download import download_csv
+from src.metafields import retrieve_metafields, update_metafields
+from src.stocks import retrieve_stocks
 
 
 MAX_FILE_SIZE = 15 * 10**6
@@ -29,6 +34,9 @@ HEADERS = {"Content-Type": "application/json",
 GRAPHQL_URL = f'{SESSION_URL}/admin/api/2022-04/graphql.json'
 
 document = Path("./queries.graphql").read_text()
+document2 = Path("./queries2.graphql").read_text()
+
+#meta_bl = ["Medidas", "Color", "Regulable"]
 
 VENDOR_QUERY = '''
     query ($cursor: String) {
@@ -60,7 +68,7 @@ META_QUERY = '''
             id
             title
             handle
-            metafields(first: 15) {
+            metafields(first: 50) {
               edges {
                 node {
                   id
@@ -116,172 +124,45 @@ def make_parser():
     return parser
 
 
-def update_metafields(products, df, session, criteria):
-    for xproduct in products:
-        product = xproduct['node']
-        prod_id = product["id"].split("/")[-1]
-        title = product["title"]
-        handle = product["handle"]
-        metafields = product['metafields']['edges']
-
-        meta_keys = []
-        meta_vals = []
-
-        for metafield in metafields:
-            #meta_namespace = metafield.attributes["namespace"]
-            meta_namespace = metafield['node']['namespace']
-            
-            if meta_namespace == "custom":
-                meta_keys.append(metafield['node']["key"])
-                meta_vals.append(metafield['node']["value"])
-            
-            else:
-                xid = metafield['node']["id"].split("/")[-1]
-                xmeta = shopify.Metafield.find(xid)
-                xmeta.destroy()
-                print(xmeta.attributes["key"], "metafield deleted",
-                      title, meta_namespace)
-
-
-        #meta_keys = [meta['node']["key"] for meta in metafields]
-        #meta_vals = [meta['node']["value"] for meta in metafields]
-        
-        # Criteria can be handler or post_title
-        _match = df[df[criteria] == handle]
-
-        if len(_match) > 0:
-            for i in range(20):
-                i_names = "Attribute "+str(i + 1) + " name"
-                i_vals = "Attribute "+str(i + 1) + " value(s)"
-                key = _match[i_names].values[0]
-                value = _match[i_vals].values[0]
-                
-                # Keys must not be nan
-                if type(key) == float and np.isnan(key):
-                    #print("skip 2")
-                    continue
-
-                elif eliminar_unidad(key) not in DEF_KEYS:
-                    #print("skip 4", key)
-                    continue
-                
-                #elif eliminar_unidad(key) == "Medidas" or eliminar_unidad(key) == "Luminosidad" or eliminar_unidad(key) == "Casquillo" or eliminar_unidad(key) == "Color":
-                elif eliminar_unidad(key) != "Potencia":
-                    #print("skip 4", key)
-                    continue
-                 
-                elif not np.all(_match[i_vals] == _match[i_vals].values[0]):
-                    #print("skip 3")
-                    continue
-
-
-                else:
-                    # Eliminar unidad del string
-                    key = eliminar_unidad(key)
-                    
-                    if criteria == "product_title" and type(value) == str:
-                        split = value.split(":")
-                        if len(split) <= 2:
-                            value = split[0]
-                            if value == "":
-                                continue
-
-
-                    meta_dict = {"value":value,
-                                 "key": key,
-                                 "namespace": "custom",
-                                 "type": "string",}
-
-
-                    # Load only defined metafields
-                    if key in DEF_KEYS:
-                        i_def_type = DEF_KEYS.index(key)
-                        datatype = DEF_TYPES[i_def_type]
-                        meta_dict["type"] = datatype
-                        #print(key)
-                        if datatype != "string":
-                            value = value.replace(" ", "")
-                            value = value.replace(",", ".")
-                            if datatype == "number_integer":
-                                value = str(int(float(value)))
-                                if value == "0":
-                                    #print('skip 6', key,
-                                    #      _match[i_vals].values[0])
-                                    continue
-                            
-                            elif datatype == "weight":
-                                aux_dict = {"value": str(value),
-                                            "unit": "g"}
-                                value = json.dumps(aux_dict)
-
-                            meta_dict["value"] = value
-
-
-                    # If there is a previous value for the metafield
-                    if key in meta_keys:
-                        i_meta = meta_keys.index(key)
-                        prev_val = meta_vals[i_meta]
-                        if prev_val == value:
-                            continue
-                        elif key in DEF_KEYS and datatype == "weight":
-                            prev_val = json.loads(prev_val)["value"]
-                            prev_val = float(prev_val)
-                            str_weight = json.loads(value)["value"]
-                            if prev_val == float(str_weight):
-                                continue
-
-                    elif type(value) == float:
-                        if np.isnan(value):
-                            #print("skip 5")
-                            continue
-                    
-                    code = 429
-                    while code == 429:
-                        try:
-                            if prod_id == '8656677765446':
-                                print(title, prod_id)
-                                import pdb; pdb.set_trace()
-                            product = shopify.Product.find(prod_id)
-                            res = product.add_metafield(shopify.Metafield(meta_dict))
-                            print("\tmetafields updated", product.title, key, value, res)
-                            code = 200
-
-                        except Exception as e:
-                            if e.code == 429:
-                                print("429 error, retrying...") #) #, waiting 5 seconds")
-
-                            elif e.code == 500 or e.code == 502:
-                                print("500 error")
-                                pass
-                        
-                            else:
-                                print(f"Ocurrió una excepción: {e}")
-
-        else:
-            print("no match", title, handle)
-            #continue
-        
-
 def update_tags(products, df, vendor, criteria="post_title"):
+    """
+    Matches online products with online products and fill tags field if
+    it's empty
+
+    Parameters
+    ----------
+    products: list
+        List of dicts
+
+    df: object
+        Pandas dataframe of offline products
+
+    vendor: string
+        Vendor name
+
+    criteria: str
+        Criteria for matching online dict and offline dataframe
+
+    """
+
     for product in products:
         title = product["title"]
         handle = product["handle"]
         prod_id = product["id"].split("/")[-1]
-        #if criteria == "post_title":
         xmatch = df[df[criteria] == title]
-        #else:
-        #    xmatch = df[df[criteria] == handle]
-        #print(product["tags"])
-        if len(xmatch) > 0 and len(product["tags"]) == 0:
-            #import pdb; pdb.set_trace()
-            tags = xmatch["category_tree"].values[0]
-            if type(tags) != str:
-                continue
-            tags = tags.replace(' -', ',')
-            product = shopify.Product.find(str(prod_id))
-            product.tags = tags
-            product.save()
-            print("tags updated", title, tags)
+        if len(product["tags"]) == 0:
+            if len(xmatch) > 0:
+                tags = xmatch["category_tree"].values[0]
+                if type(tags) != str:
+                    continue
+                tags = tags.replace(' -', ',')
+                product = shopify.Product.find(str(prod_id))
+                product.tags = tags
+                product.save()
+                print("tags updated", title, tags)
+
+            else:
+                pdb.set_trace()
             
 
 def retrieve_shopify(vendor): 
@@ -296,11 +177,9 @@ def retrieve_shopify(vendor):
 
 def retrieve_raw_vendor():
     names = ['post_title', 'sku', 'stock']
-    n_attributes = 20
-    # Read CSV from URL into DataFrame
-    print(f"retrieving {args.venor} metafields from", VENDOR_RAW_URL)
-    df_gt = pd.read_csv(VENDOR_RAW_URL, sep=';', usecols=range(60),
-                        index_col=False)
+    print(f"retrieving {args.vendor} metafields from", VENDOR_RAW_URL)
+    io = download_csv(VENDOR_RAW_URL)
+    df_gt = pd.read_csv(io, sep=';', usecols=range(60), index_col=False)
 
     return df_gt
 
@@ -322,7 +201,8 @@ def get_new_products(d_products, df):
 def update_shopify(products, df_shop, location_id, inventory):
     print("\tupdating Shopify stocks...")
     for xproduct in inventory:
-        #print(xproduct)
+        if xproduct is None:
+            continue
         prod_id = xproduct["id"].split("/")[-1]
         var_sku = xproduct["sku"]
         var_levels = xproduct["inventoryItem"]["inventoryLevels"]
@@ -336,60 +216,25 @@ def update_shopify(products, df_shop, location_id, inventory):
             prev_stock = var_stock
             sku = var_sku
             
-            if match_stock == 0:
-                if prev_stock == 0:
-                    code = 429
-                    while code == 429:
-                        try:
-                            shopify.InventoryLevel.set(inventory_item_id=inv_id,
-                                                       available=2,
-                                                       location_id=location_id)
-                            print("\t", sku, "actualizado", 2, "unidades")
-                            code = 200
+            if match_stock == prev_stock and prev_stock == 0:
+                update_inventory(inv_id, location_id, sku, 2)
 
-                        except Exception as e:
-                            if e.code == 429:
-                                print("429 error, retrying...") #) #, waiting 5 seconds")
+            elif prev_stock != match_stock:
+                if match_stock > 0:
+                    update_inventory(inv_id, location_id, sku, match_stock)
 
-                            elif e.code == 500 or e.code == 502:
-                                print("500 error")
-                                pass
-                                
-                            else:
-                                print(f"Ocurrió una excepción: {e}")    
-
-            elif prev_stock != match_stock and match_stock != 0:
-                if prev_stock == 0:
-                    code = 429
-                    while code == 429:
-                        try:
-                            shopify.InventoryLevel.set(inventory_item_id=inv_id,
-                                                       available=match_stock,
-                                                       location_id=location_id)
-                            print("\t", sku, "updated", prev_stock, "to",
-                                  match_stock)
-                            code = 200
-
-                        except Exception as e:
-                            if e.code == 429:
-                                print("429 error, retrying...") #) #, waiting 5 seconds")
-
-                            elif e.code == 500 or e.code == 502:
-                                print("500 error")
-                                pass
-                                
-                            else:
-                                print(f"Ocurrió una excepción: {e}")  
 
 
 def retrieve_products(vendor, limit=250, cursor=None):
     # La consulta GraphQL para obtener productos
     graphql_query = VENDOR_QUERY % (limit, vendor)
-    tiene_siguiente_pagina = True
+    has_next_page = True
     # Ciclo para manejar la paginación
     data = {}
     count = 0
-    while tiene_siguiente_pagina:
+    #while tiene_siguiente_pagina:
+    while has_next_page:
+    #if has_next_page:
         payload = {
             'query': graphql_query,
             'variables': {'cursor': cursor}
@@ -408,13 +253,14 @@ def retrieve_products(vendor, limit=250, cursor=None):
 
         count += len(edges)
         print(count, "products loaded")
-        tiene_siguiente_pagina = products['pageInfo']['hasNextPage']
+        has_next_page = products['pageInfo']['hasNextPage']
         cursor = edges[-1]["cursor"]
         yield [edge['node'] for edge in edges]
         #for edge in edges:
-            #productos.append(edge['node'])
-            #yield edge['node']
-            #cursor = edge['cursor']
+        #    productos.append(edge['node'])
+        #    yield edge['node']
+        #    cursor = edge['cursor']
+    #yield productos
     #return productos
 
 def delete_product(prod_id):
@@ -486,7 +332,25 @@ def check_variants(products, df_shop):
 
 
 def check_stock(products, df_shop, location_id):
-    # print("Checking Shopify products...")
+    """
+    Compares the current (old/online) products list with the new/offline one,
+    deleting online products that are not matched
+    
+    Parameters
+    ----------
+    products: list
+        List of products' dicts
+
+    df_shop: Object
+        Pandas dataframe of offline products
+
+    location_id:
+
+    Returns
+    -------
+    list:
+        IDs list of matched products
+    """
     product_ids = []
     norm_handles = df_shop['Handle'].apply(normalizar_cadena)
     for xproduct in products:
@@ -532,49 +396,6 @@ def check_stock(products, df_shop, location_id):
     return product_ids
 
 
-def obtener_stocks(inventory_item_ids, limite=250):
-    query2 = """
-    query($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on ProductVariant {
-          id
-          sku
-          inventoryItem {
-            id
-            inventoryLevels(first: 1) {
-              edges {
-                node {
-                  available  # Stock disponible
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    """
-    products = []
-    data = {}
-    for i_products in range(0, len(inventory_item_ids), limite):
-        ids = inventory_item_ids[i_products:i_products + limite]
-        variables = {'ids': ids}
-        payload = {'query': query2, 'variables': variables}
-        response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                 headers=HEADERS, json=payload)
-
-        data = response.json()
-        # Retry until it works
-        while "errors" in data.keys():
-            print("\t throttled")
-            response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                     headers=HEADERS, json=payload)
-            data = response.json()
-        products_i = data['data']['nodes']
-        products.extend(products_i)
-        print("\t", len(products))
-    return products
-
-
 def obtener_variantes(product_ids, limite=230):
     query = """
     query($ids: [ID!]!) {
@@ -602,6 +423,7 @@ def obtener_variantes(product_ids, limite=230):
     products = []
     cursor = None
     data = {}
+    #print(len(product_ids))
     for i_products in range(0, len(product_ids), limite):
         ids = product_ids[i_products:i_products + limite]
         variables = {'ids': ids}
@@ -620,50 +442,6 @@ def obtener_variantes(product_ids, limite=230):
         products.extend(products_i)
         # print("\t", len(products))
     return products
-
-
-def retrieve_metafields(product_ids, limite=250):
-    query = """
-    query($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on Product {
-          title
-          handle
-          id
-          metafields(first: 250) {
-            edges {
-              node {
-                key
-                value
-              }
-            }
-          }
-        }
-      }
-    }
-    """
-    metafields = []
-    data = {}
-    for i_products in range(0, len(product_ids), limite):
-        ids = product_ids[i_products:i_products + limite]
-        ids = [id["id"] for id in ids]
-        variables = {'ids': ids}
-        payload = {'query': query, 'variables': variables}
-        response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                 headers=HEADERS, json=payload)
-
-        data = response.json()
-        # Retry until it works
-        while "errors" in data.keys():
-            import pdb; pdb.set_trace()
-            print("\t throttled")
-            response = requests.post(f'{SESSION_URL}/admin/api/2022-04/graphql.json',
-                                     headers=HEADERS, json=payload)
-            data = response.json()
-        metafields_i = data['data']['nodes']
-        metafields.extend(metafields_i)
-        print("\t", len(metafields))
-    return metafields
 
 
 def update_meta(df, vendor, criteria, limite=50, cursor=None):
@@ -690,7 +468,6 @@ def update_meta(df, vendor, criteria, limite=50, cursor=None):
             data = response.json()
 
         # data = response.json()
-        # import pdb; pdb.set_trace()
         products = data['data']['products']
         edges = products['edges']
         #for edge in edges:
@@ -721,7 +498,10 @@ if __name__ == "__main__":
         print_str = "Retrieving products from"
         print(print_str, VENDOR_URL)
         # Read CSV from URL into DataFrame
-        df_shop = pd.read_csv(VENDOR_URL, on_bad_lines='skip')
+        #csv_data = requests.get(VENDOR_URL)
+        #io = StringIO(csv_data.text)
+        io = download_csv(VENDOR_URL)
+        df_shop = pd.read_csv(io, on_bad_lines='skip')
         if args.metafields or args.tags:
             print("RETRIEVING METAFIELDS AND TAGS")
             vendor_df = retrieve_raw_vendor()
@@ -753,10 +533,7 @@ if __name__ == "__main__":
         DEF_KEYS = [x["node"]["key"] for x in definitions]
         DEF_TYPES = [x["node"]["type"]["name"] for x in definitions]
 
-
-        #old_shopify = obtener_productos_vendor(vendor=args.vendor)
         for old_shopify in retrieve_products(limit=250, vendor=args.vendor):
-            # continue 
             if args.update_stock:
                 print("\tCHECKING STOCK")
                 old_shopify = check_stock(old_shopify, df_shop, location_id)
@@ -765,18 +542,18 @@ if __name__ == "__main__":
                 print(f"\tCHECKING {len(old_shopify)} VARIANTS")
                 variants = check_variants(old_shopify, df_shop)
                 print("\tRETRIEVING INVENTORY LEVELS")
-                inventory = obtener_stocks(variants)
                 print("\tUPDATE STOCKS")
-                update_shopify(variants, df_shop, location_id, inventory)
+                for inv_chunk in retrieve_stocks(variants):
+                    update_shopify(variants, df_shop, location_id, inv_chunk)
         
             
             if args.metafields or args.tags:
                 if args.metafields:
-                    print("RETRIEVING METAFIELDS")
+                    print("\tRETRIEVING METAFIELDS")
                     metafields = retrieve_metafields(old_shopify)
-                    update_meta(vendor_df, args.vendor, criteria)
-                    #update_metafields(old_shopify, vendor_df, session=session,
-                    #                  vendor=args.vendor)
+                    #update_meta(vendor_df, args.vendor, criteria)
+                    update_metafields(metafields, vendor_df, session,
+                                      DEF_KEYS, DEF_TYPES, criteria)
 
                 if args.tags and not args.csv:
                     print("UPDATE TAGS")
