@@ -1,0 +1,19 @@
+query IQuery($ids: [ID!]!) {
+	nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          sku
+          inventoryItem {
+            id
+            inventoryLevels(first: 1) {
+              edges {
+                node {
+                  available  # Stock disponible
+                }
+              }
+            }
+          }
+        }
+      }
+}
+
